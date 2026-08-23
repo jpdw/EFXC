@@ -92,45 +92,79 @@ void setup() {
 }
 
 
+// Non-blocking replacement for what used to be a chain of delay() calls in
+// loop() below. Those delay()s (~3s total per pass) meant core.handle()
+// only ran once every ~3s, which made JIOT-Core's AP-setup web server
+// (and MQTT/scheduler) effectively unreachable - a delay() blocks
+// everything, not just this animation. Same sequence/timing/labels as
+// before, just advanced via millis() so it never blocks.
+void ledDemoStep(){
+  static uint8_t step = 0;
+  static unsigned long nextStepAt = 0;
+  if (millis() < nextStepAt){
+    return;
+  }
+
+  switch (step){
+    case 0:
+      Serial.println("loop");
+      nextStepAt = millis() + 100;
+      break;
+    case 1:
+      digitalWrite(RGB_BUILTIN, HIGH);  // Turn the RGB LED white
+      Serial.println("white");
+      nextStepAt = millis() + 500;
+      break;
+    case 2:
+      digitalWrite(RGB_BUILTIN, LOW);  // Turn the RGB LED off
+      Serial.println("off");
+      nextStepAt = millis() + 500;
+      break;
+    case 3:
+      neopixelWrite(RGB_BUILTIN, RGB_BRIGHTNESS, 0, 0);  // Red
+      Serial.println("red");
+      nextStepAt = millis() + 500;
+      break;
+    case 4:
+      neopixelWrite(RGB_BUILTIN, 0, RGB_BRIGHTNESS, 0);  // Green
+      Serial.println("green");
+      nextStepAt = millis() + 500;
+      break;
+    case 5:
+      neopixelWrite(RGB_BUILTIN, 0, 0, RGB_BRIGHTNESS);  // Blue
+      Serial.println("blue");
+      nextStepAt = millis() + 500;
+      break;
+    case 6:
+      neopixelWrite(RGB_BUILTIN, 0, 0, 0);  // Off / black
+      nextStepAt = millis() + 500;
+      break;
+    case 7:
+      neopixelWrite(RGB_BUILTIN, RGB_BRIGHTNESS, 0, 0);  // Red
+      Serial.println("red");
+      nextStepAt = millis() + 250;
+      break;
+    case 8:
+      neopixelWrite(RGB_BUILTIN, 0, RGB_BRIGHTNESS, 0);  // Green
+      Serial.println("green");
+      nextStepAt = millis() + 250;
+      break;
+    case 9:
+      neopixelWrite(RGB_BUILTIN, 0, 0, 0);  // Off / black
+      nextStepAt = millis() + 250;
+      break;
+  }
+  step = (step + 1) % 10;
+}
+
 void loop() {
-  // put your main code here, to run repeatedly:
-
-  delay(100);
-  Serial.println("loop");
-
-
-  digitalWrite(RGB_BUILTIN, HIGH);  // Turn the RGB LED white
-  Serial.println("white");
-  delay(500);
-  digitalWrite(RGB_BUILTIN, LOW);  // Turn the RGB LED off
-  Serial.println("off");
-  delay(500);
-
-  neopixelWrite(RGB_BUILTIN, RGB_BRIGHTNESS, 0, 0);  // Red
-  Serial.println("red");
-  delay(500);
-  neopixelWrite(RGB_BUILTIN, 0, RGB_BRIGHTNESS, 0);  // Green
-  Serial.println("green");
-  delay(500);
-  neopixelWrite(RGB_BUILTIN, 0, 0, RGB_BRIGHTNESS);  // Blue
-  Serial.println("blue");
-  delay(500);
-  neopixelWrite(RGB_BUILTIN, 0, 0, 0);  // Off / black
-  delay(500);
-
-
-  neopixelWrite(RGB_BUILTIN, RGB_BRIGHTNESS, 0, 0);  // Red
-  Serial.println("red");
-  delay(250);
-  neopixelWrite(RGB_BUILTIN, 0, RGB_BRIGHTNESS, 0);  // Green
-  Serial.println("green");
-  delay(250);
-  neopixelWrite(RGB_BUILTIN, 0, 0, 0);  // Off / black
-  delay(250);
-
-  //watchdog_loop();
+  // core.handle() must run every pass, not gated behind the LED demo's
+  // own timing - see ledDemoStep()'s comment above.
   core.handle();
 
+  ledDemoStep();
+
+  //watchdog_loop();
 }
 // put function definitions here:
 //int myFunction(int x, int y) {
