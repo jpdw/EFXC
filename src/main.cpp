@@ -5,7 +5,6 @@
 #include <Arduino.h>
 #include "build_info.h"
 #include "esp_funcs.h"
-#include "persistent_config.h"
 #include "hal.h"
 //#include "pwm.h"
 #include "watchdog.h"
@@ -13,11 +12,12 @@
 //#include "profile.h"
 //#include "application.h"
 
-// Networking
-#include "wlan.h"
-//#include "mqtt.h"
+// Networking - JIOT-Core's Core owns WLAN + MQTT (see Core::start()/handle())
+#include "Core.h"
 //#include "ota.h"
 //#include "mdns_resolve.h"
+
+Core core;
 
 // Features - lights
 //#include "fader.h"
@@ -85,13 +85,7 @@ void setup() {
   neopixelWrite(RGB_BUILTIN, 0, 0, 0);  // Off
   delay(2000);
 
-  wlan_setup();
-
-  Serial.println("main.spp: Setup calling persistent_config_setup");
-
-  persistent_config_setup();
-
-  Serial.println("main.spp: Back from persistent_config_setup");
+  core.start();
 
   Serial.println("main.spp: Setup finished");
 
@@ -135,7 +129,7 @@ void loop() {
   delay(250);
 
   //watchdog_loop();
-  wlan_loop();
+  core.handle();
 
 }
 // put function definitions here:
