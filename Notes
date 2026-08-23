@@ -1,0 +1,567 @@
+
+
+
+
+
+
+// Define an external pointer for the MQTT
+extern void setMqttServer(String);
+
+boolean settingMode;
+IPAddress ipAddress;
+
+#ifdef ENABLE_WEBSERVER
+ESP8266WebServer webServer(80);
+#endif
+
+//WiFiClient wifiClient;
+
+String ssidList;
+
+const IPAddress apIP(192, 168, 1, 1);
+DNSServer dnsServer;
+
+
+struct WlanConfig {
+  String name;      /* Name of the config */
+  String ssid = "";
+  String pass = "";
+  String mqtt = "";
+  String port = "";
+};
+
+/*******************************************************************************
+ *******************************************************************************
+ **
+ ** WLAN RELATED CONFIGURATION
+ **
+ *******************************************************************************
+ ******************************************************************************/
+WlanConfig wlanConfig[2];
+unsigned int wlanConfigCount = 0;
+
+// Write config, as json, to LittleFS file
+bool saveConfig(unsigned int index, String ssid, String pass, String mqtt, String port){
+  StaticJsonDocument<200> jsonDoc;
+  JsonObject json = jsonDoc.createNestedObject();
+  //json["ssid"] = "";
+  //json["pass"] = "";
+  json["ssid"] = ssid;
+  json["pass"] = pass;
+  json["mqtt"] = mqtt;
+  json["port"] = port;
+
+  File configFile = LittleFS.open(WLAN_CONFIG_FILE, "w");
+  if (!configFile) {
+    Serial.println("Failed to open config file for writing");
+    return false;
+  }
+  serializeJsonPretty(json, configFile);
+  configFile.close();
+  return true;
+}
+
+
+// Load config from json file, parse 
+bool loadWlanConfig() {
+  if(!LittleFS.exists(WLAN_CONFIG_FILE)){
+    Serial.println("WLAN config file does not exist");
+    return false;
+  }
+
+  File configFile = LittleFS.open(WLAN_CONFIG_FILE, "r");
+
+  if (!configFile) {
+    Serial.println("Failed to open config file");
+    return false;
+  }
+
+  size_t size = configFile.size();
+  if (size > 1024) {
+    Serial.println("Config file size is too large");
+    return false;
+  }
+
+  // Allocate a buffer to store contents of the file.
+  std::unique_ptr<char[]> buf(new char[size]);
+
+  // We don't use String here because ArduinoJson library requires the input
+  // buffer to be mutable. If you don't use ArduinoJson, you may as well
+  // use configFile.readString instead.
+  configFile.readBytes(buf.get(), size);
+
+  StaticJsonDocument<200> jsonDoc;
+  DeserializationError error = deserializeJson(jsonDoc, buf.get());
+
+  if(error){
+    Serial.println("Deserialisation failed");
+    Serial.println(error.f_str());
+    return false;
+  }
+
+  String ssid = jsonDoc["ssid"];
+  String pass = jsonDoc["pass"];
+  String mqtt = jsonDoc["mqtt"];
+
+  //Serial.print("Loaded ssid: ");
+  //Serial.println(ssid);
+  //Serial.print("Loaded pass: ");
+
+  // put into the globabl config
+  int index = 0;
+  wlanConfig[index].ssid = ssid;
+  wlanConfig[index].pass = pass;
+  wlanConfig[index].mqtt = mqtt;
+  wlanConfig[index].mqtt = "1883";
+  
+  return true;
+}
+
+void resetWlanConfig(){
+  LittleFS.remove(WLAN_CONFIG_FILE);
+}
+
+/*******************************************************************************
+ *******************************************************************************
+ **
+ ** WLAN CONNECT 
+ **
+ *******************************************************************************
+ ******************************************************************************/
+
+
+/*
+ * wlanConnect 
+ * 
+ * Starts the attempt to connect to a WLAN
+ * 
+ * ssid and password are specified in the arguements
+ * 
+ * Function is non-blocking, returing the result
+ * of the call to WiFi.begin()
+ * 
+ */
+boolean wlanConnect(const char * ssid,const char * pass) {
+    boolean r;
+    Serial.print("Association attempt to \"");
+    Serial.print(ssid);
+    Serial.println("\"");
+    r = WiFi.begin(ssid, pass);
+    return r;
+     
+}
+
+
+/*
+  checkWlanConnection
+
+  Blocking while WLAN connection is attempted, exiting
+  on success or timeout of 15 seconds
+
+  returns true/false to indicate whether connection was successful
+*/
+#define WAIT_FOR_WLAN 15 /* seconds */
+
+boolean checkWlanConnection() {
+
+  unsigned long millis_now = millis(); 
+  static unsigned long millis_at_start = 0; 
+  static unsigned long timeout_at;
+  int count=0;
+
+  // Get millis at this moment so we can be consistent with what is
+  // the 'current' time
+  millis_now = millis();
+
+    
+  // Record start of the connection attempt (we will block till its finished)
+  if (millis_at_start == 0){
+    millis_at_start = millis_now;
+    timeout_at = millis_at_start + (WAIT_FOR_WLAN * 1000);
+  }
+
+  while(1){
+
+    // Update current millis as this is the start of the blocking loop
+    millis_now = millis();
+
+
+    // Have we timed out?
+    if (millis_now > timeout_at){
+      //Serial.println("Connection attempt duration has exceed timeout... exiting");
+      // Reset millis_at_start in case we will re-call this process
+      millis_at_start = 0;
+      return false;
+    }
+
+    // Now check status of connection
+    if (WiFi.status() == WL_CONNECTED){
+      Serial.println();
+      Serial.println("Association successful");
+
+      Serial.print("Connection took ");
+      Serial.print(millis_now - millis_at_start);
+      Serial.println("ms");
+      //Serial.print(" start     : "); Serial.println(millis_at_start);
+      //Serial.print(" fimish    : "); Serial.println(millis_now);
+      //Serial.print(" time      : "); Serial.println(millis_now - millis_at_start);
+      //Serial.print(" iterations: "); Serial.println(count);
+
+      // Store IP Address for global reference
+      ipAddress = WiFi.localIP();
+
+      return true;
+
+    }else{
+      count++;
+      yield();
+    }
+  }
+}
+
+boolean try_wlan_connection(unsigned int index){
+  Serial.print("Attempting to connect to index ");
+  Serial.println(index);
+
+  wlanConnect(wlanConfig[index].ssid.c_str(), wlanConfig[index].pass.c_str());
+
+  // Blocking call to wait for (a) success or (b) timeout
+  if (checkWlanConnection()) {
+    settingMode = false;
+    startWebServer();
+
+    return true;
+
+  }else{
+    return false;
+  }
+}
+
+
+
+/*******************************************************************************
+ *******************************************************************************
+ **
+ ** WLAN WEB SERVER 
+ **
+ *******************************************************************************
+ ******************************************************************************/
+
+
+/*
+ * startWebServer 
+ *
+ * Start the basic webserver
+ */
+void startWebServer() {
+#ifdef ENABLE_WEBSERVER
+
+  if (settingMode) {
+    Serial.print("Starting WebServer");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.softAPIP());
+
+    // Register URL handlers
+    webServer.on("/settings", []() {
+      String s = "<h1>Device Wi-Fi Settings</h1><p>";
+      s += device_id;
+      s += "</p><p>Please select the ESSID from the scanned list and then enter the password.</p>";
+      s += "<form method=\"get\" action=\"apsetup\"><label>ESSID: </label><select name=\"essid\">";
+      s += ssidList;
+      Serial.println(ssidList);
+      s += "</select><br><br>Password: <input name=\"pass\" length=64 type=\"password\"><br><br>Enter IP Address of the MQTT server to connect to. Or leave blank to rely upon mDNS.<br>MQTT IP Addr: <input name=\"ipaddr\" length=16 type=\"text\"><input type=\"submit\"></form>";
+      webServer.send(200, "text/html", makePage("Wi-Fi Settings", s));
+    });
+    webServer.on("/apsetup", []() {
+      
+      String ssid = urlDecode(webServer.arg("essid")) + "\0";
+      Serial.print("ESSID: ");
+      Serial.println(ssid);
+      String pass = urlDecode(webServer.arg("pass"));
+      Serial.print("Password: ");
+      Serial.println(pass);
+      String ipaddr_s = urlDecode(webServer.arg("ipaddr"));
+      Serial.print("MQTT IP Address: ");
+      Serial.println(ipaddr_s);
+      char ipaddr[16];
+      unsigned int ip[4];
+      ipaddr_s.toCharArray(ipaddr, 16);
+      sscanf(ipaddr, "%u.%u.%u.%u", &ip[0], &ip[1], &ip[2], &ip[3]);
+
+      Serial.print(ip[0]);
+      Serial.print(".");
+      Serial.print(ip[1]);
+      Serial.print(".");
+      Serial.print(ip[2]);
+      Serial.print(".");
+      Serial.println(ip[3]);
+      Serial.print("done");
+
+      saveConfig(0, ssid, pass, ipaddr_s, "1883");
+      String s = "<h1>Setup complete.</h1><p>device will be connected to \"";
+      s += ssid;
+      s += "\" after the restart.";
+      webServer.send(200, "text/html", makePage("Wi-Fi Settings", s));
+
+
+
+
+      ESP.restart();
+    });
+    webServer.onNotFound([]() {
+      String s = "<h1>AP mode - " + String(device_id) + "</h1><p><a href=\"/settings\">Wi-Fi Settings</a></p>";
+      webServer.send(200, "text/html", makePage("AP mode - " + String(device_id), s));
+    });
+  }
+  else {
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+
+    // Register URL handlers
+    webServer.on("/", []() {
+      String s = "<h1>STA mode</h1><p>";
+      s += device_id;
+      s += "</p><p><a href=\"/reset\">Reset Wi-Fi Settings</a></p>";
+      s += "</p><p><a href=\"/reset\">MQTT is DHCP server</a></p>";
+      webServer.send(200, "text/html", makePage("STA mode", s));
+    });
+    webServer.on("/reset", []() {
+      resetWlanConfig();
+      String s = "<h1>Wi-Fi settings have been reset.</h1><p>Please reboot device.</p>";
+      webServer.send(200, "text/html", makePage("Reset Wi-Fi Settings", s));
+    });
+    webServer.on("/status", []() {
+      String s = "<h1>Status</h1><p>";
+
+      IPAddress ipaddr;
+      if (WiFi.hostByName("mqtt.blueellipse.net", ipaddr) == 1){
+        s += "Resolved to ";
+        s += ipaddr.toString();
+        
+      }else{
+        s += "DNS failed";
+      }
+      webServer.send(200, "text/html", makePage("Status", s));
+
+    });
+  };
+
+  webServer.begin();
+#endif
+}
+
+int ScanNetworks::doScan(){
+    int ret;
+    ret = this->networkCount = WiFi.scanNetworks();
+    Serial.println("Found " + String(ret) + " networks");
+    return ret;
+}
+
+String ScanNetworks::getOptionList(){
+    String optionList;
+    for(int i = 0; i < this->networkCount; ++i){
+        optionList += "<option value=\"" + WiFi.SSID(i) + "\">" + WiFi.SSID(i) + "</option>";
+        Serial.println(WiFi.SSID(i));
+    }
+    return optionList;
+}
+
+
+/*******************************************************************************
+ *******************************************************************************
+ **
+ ** WLAN SETUP MODE / ACCESS POINT MODE 
+ **
+ *******************************************************************************
+ ******************************************************************************/
+
+
+/*             */
+/*  SETUP MODE */
+/*             */
+
+void setupMode() {
+  char apSSID[33];
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(100);
+ 
+    ScanNetworks scanNetworks;
+    scanNetworks.doScan();
+    ssidList = scanNetworks.getOptionList();
+
+  delay(100);
+
+  // Generate SSID
+  sprintf(apSSID,"%s%s",SETUP_WLAN_PREFIX,device_id); //SETUP_WLAN_PREFIX
+  
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+  WiFi.softAP(apSSID);
+  
+  dnsServer.start(53, "*", apIP);
+  
+  Serial.print("Starting Access Point at \"");
+  Serial.print(apSSID);
+  Serial.println("\"");
+}
+
+String makePage(String title, String contents) {
+  String s = "<!DOCTYPE html><html><head>";
+  s += "<meta name=\"viewport\" content=\"width=device-width,user-scalable=0\">";
+  s += "<title>";
+  s += title;
+  s += "</title></head><body>";
+  s += contents;
+  s += "</body></html>";
+  return s;
+}
+
+String urlDecode(String input) {
+  String s = input;
+  s.replace("%20", " ");
+  s.replace("+", " ");
+  s.replace("%21", "!");
+  s.replace("%22", "\"");
+  s.replace("%23", "#");
+  s.replace("%24", "$");
+  s.replace("%25", "%");
+  s.replace("%26", "&");
+  s.replace("%27", "\'");
+  s.replace("%28", "(");
+  s.replace("%29", ")");
+  s.replace("%30", "*");
+  s.replace("%31", "+");
+  s.replace("%2C", ",");
+  s.replace("%2E", ".");
+  s.replace("%2F", "/");
+  s.replace("%2C", ",");
+  s.replace("%3A", ":");
+  s.replace("%3A", ";");
+  s.replace("%3C", "<");
+  s.replace("%3D", "=");
+  s.replace("%3E", ">");
+  s.replace("%3F", "?");
+  s.replace("%40", "@");
+  s.replace("%5B", "[");
+  s.replace("%5C", "\\");
+  s.replace("%5D", "]");
+  s.replace("%5E", "^");
+  s.replace("%5F", "-");
+  s.replace("%60", "`");
+  return s;
+}
+
+/*******************************************************************************
+ *******************************************************************************
+ **
+ ** WLAN CALL BACKS 
+ **
+ *******************************************************************************
+ ******************************************************************************/
+
+/**
+ * Callback handler for generic wlan-related commands
+ * @param param string of further parameters
+ * @return none
+ */
+void cbWlanCommand(String params){
+    // param = [port] [on|off]
+
+    // get the params split in two
+//    int index = params.indexOf(" ");
+    if(params == "reset"){
+        resetWlanConfig();
+        mqtt_log("WLAN config reset");
+    }
+}
+
+
+/*******************************************************************************
+ *******************************************************************************
+ **
+ ** WLAN SETUP / LOOP FUNCTIONS
+ **
+ *******************************************************************************
+ ******************************************************************************/
+
+/**
+ * Setup function for the WLAN module - run
+ * once, at boot time. Initialises the WLAN
+ * interface, loads config (if it exists) and
+ * does a first attempt to connect. If no config
+ * is found, it initiates setup mode
+ * @param none
+ * @return boolean successful
+ */
+boolean setup_wlan(){
+
+// Emergency to get default nw saved
+//  saveConfig(0,"","");
+
+
+  WiFi.softAPdisconnect(true);
+
+  // Original  EEPROM based config
+  //if ( restoreConfig()) {
+  if (loadWlanConfig()) {
+
+    WiFi.mode(WIFI_STA);
+    //WiFi.hostname(string_buffer);
+    //WiFi.begin(essid, password);
+
+    unsigned int index;
+    index = 0;  /* use config 0 */
+
+    if(try_wlan_connection(index) == true){
+      Serial.println("Associated to WLAN on first attempt");
+      settingMode = false;
+    }else{
+      if(try_wlan_connection(!index) == true){
+        Serial.println("Associated to WLAN on second attempt");
+        settingMode = false;
+      }else{
+        // failed twice
+        Serial.println("Association failed twice - starting Set-up Mode");
+        settingMode = true;
+      }
+    }
+  }else{
+    // no configuration found (or parsable)
+    // so need to invoke setup mode
+    settingMode = true;
+  }
+
+  // If settingMode is flagged, enter setup mode
+  if( settingMode == true){    
+    setupMode();
+    startWebServer();
+  }
+
+  // Disable this *second* call to start the website -- seems unneccessary (October 2024)
+  //Serial.println("call to startWebServer");
+  //startWebServer();
+
+  // Register module commands
+  commands->add("wlan", cbWlanCommand);
+
+  Serial.println("Exiting setup_wlan");
+
+  return(!settingMode);
+}
+
+
+void loop_wlan(){
+
+  // 2023: Emergency rescue!!
+  // resetWlanConfig();
+  // Serial.println("emergency purge of wlanConfig");
+
+  if(settingMode==true){
+    dnsServer.processNextRequest();    
+  }
+#ifdef ENABLE_WEBSERVER
+  webServer.handleClient();
+#endif
+}
