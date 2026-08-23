@@ -8,7 +8,6 @@
 #include "hal.h"
 //#include "pwm.h"
 #include "watchdog.h"
-#include "commands.h"
 //#include "profile.h"
 //#include "application.h"
 
@@ -85,6 +84,12 @@ void setup() {
   neopixelWrite(RGB_BUILTIN, 0, 0, 0);  // Off
   delay(2000);
 
+  // Must be distinct from other Core-based devices on the same broker -
+  // Mqtt's client_id is built from this, and a broker disconnects
+  // whichever client already holds a duplicate id (seen live: this board
+  // and JIOT-Core's own D1 Mini test both defaulted to "new node" and
+  // kept fighting over the connection).
+  core.setNodeName("EFXC");
   core.start();
 
   Serial.println("main.spp: Setup finished");

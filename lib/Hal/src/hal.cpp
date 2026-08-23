@@ -1,7 +1,6 @@
 #include "hal.h"
 
 #include <ArduinoJson.h>
-#include "commands.h"
 
 // Define globally in this module
 HwLedController * controller = new HwLedController;
@@ -306,17 +305,6 @@ void setup_hardware(){
     
     // Configure which output channels are red, blue & green
     controller->rgbConfig(1,2,3,true);
-}
-
-
-// Code moved out of setup_hardware()
-
-void setup_hardware_commamds(){
-
-    // Temporarily add a test command
-    commands->add("test_slide", cbTestSlide);
-    commands->add("outoff", cbControllerOutputsOff);
-
 }
 
 
