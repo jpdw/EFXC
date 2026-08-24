@@ -72,7 +72,7 @@ class HwPort{
 class HwLedController{
     public:
         HwLedController();                      // Base Constructor
-        HwPort * outputs[4];
+        HwPort * outputs[4] = {nullptr, nullptr, nullptr, nullptr}; // unconfigured slots must be null, not garbage - see issue #1
         void begin(unsigned int);
         void add(unsigned int, uint8_t, bool, String);
         void output(unsigned int, bool);
@@ -92,16 +92,17 @@ class HwLedController{
         void transitionDelay(unsigned int);  // set a transition delay
         unsigned int transitionDelay();         // get current transition delay value
     private:
-        unsigned int channelRed;
-        unsigned int channelGreen;
-        unsigned int channelBlue;
+        // 0 = "not configured yet" (same convention as on()/off()'s 0 =
+        // "all") - rgb() checks this before use, see issue #1.
+        unsigned int channelRed = 0;
+        unsigned int channelGreen = 0;
+        unsigned int channelBlue = 0;
         unsigned int channelCount = 0;          // number of defined ports/channels
         unsigned int _transitionDelay = 0;       // time to pause during a transition
         bool _triggerMode = false;              // whether to store new value till triggered
 };
 
 void setup_hardware();
-extern void test_deserialise();
 
 extern HwLedController * controller;
 

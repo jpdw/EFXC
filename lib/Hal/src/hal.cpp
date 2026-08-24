@@ -1,6 +1,12 @@
 #include "hal.h"
 
-#include <ArduinoJson.h>
+// Was declared in hal.h but never actually defined anywhere - a pre-existing
+// bug (confirmed via git history, predates this session's changes) that
+// only surfaced once something forced a genuinely fresh link. Empty body
+// is correct: all real initialization already happens via the class's own
+// in-class member defaults (outputs[4], channelCount, etc. - see hal.h).
+HwLedController::HwLedController(){
+}
 
 // Define globally in this module
 HwLedController * controller = new HwLedController;
@@ -98,12 +104,25 @@ bool HwPort::pwm(float dutyCycle){
     return true;
 }
 
+// port is 1-based everywhere in this class (matches outputConfig/on/off) -
+// 0 and anything beyond the outputs[4] array is rejected, not just
+// silently underflowed (unsigned 0-1 wraps to a huge index) - see issue #1.
+static boolean portInRange(unsigned int port){
+    return port >= 1 && port <= 4;
+}
+
 void HwLedController::begin(unsigned int port){
-    this->outputs[1] = new HwPort;
+    if (!portInRange(port)){
+        return;
+    }
+    this->outputs[port-1] = new HwPort;
 }
 
 void HwLedController::output(unsigned int port, bool state){
-    HwPort * a = this->outputs[port];
+    if (!portInRange(port) || this->outputs[port-1] == nullptr){
+        return;
+    }
+    HwPort * a = this->outputs[port-1];
 
     if(state == true){
         a->on();
@@ -113,6 +132,9 @@ void HwLedController::output(unsigned int port, bool state){
 }
 
 void HwLedController::outputConfig(unsigned int port, unsigned int pin, bool inverted, String name){
+    if (!portInRange(port)){
+        return;
+    }
     HwPort * hwPort = new HwPort;
     //Serial.print("port ");
     //Serial.print(port);
@@ -124,22 +146,24 @@ void HwLedController::outputConfig(unsigned int port, unsigned int pin, bool inv
     hwPort->triggerMode(false);
 
     this->outputs[port-1] = hwPort;
-    
+
     // crude counter... should do this better:
     this->channelCount++;
 }
 
 // ON  - single channel or 0 for all
 void HwLedController::on(unsigned int channel){
-    
+
     //Serial.print("HwController::on");
     //Serial.println(channel);
 
     if(!channel){
         for(unsigned int i=0;i<this->channelCount;i++){
-            this->outputs[i]->on();
+            if (this->outputs[i] != nullptr){
+                this->outputs[i]->on();
+            }
         }
-    }else{
+    }else if (portInRange(channel) && this->outputs[channel-1] != nullptr){
         this->outputs[channel-1]->on();
     }
 }
@@ -148,14 +172,22 @@ void HwLedController::on(unsigned int channel){
 void HwLedController::off(unsigned int channel){
     if(!channel){
         for(unsigned int i=0;i<this->channelCount;i++){
-            this->outputs[i]->off();
+            if (this->outputs[i] != nullptr){
+                this->outputs[i]->off();
+            }
         }
-    }else{
+    }else if (portInRange(channel) && this->outputs[channel-1] != nullptr){
         this->outputs[channel-1]->off();
     }
-}             
+}
 
 void HwLedController::rgbConfig(unsigned int red, unsigned int green, unsigned int blue, bool triggerMode){
+    // Same 1-based-channel contract as outputConfig/on/off (see issue #1) -
+    // rgb() below trusts these to already be valid, so reject bad values
+    // here rather than underflowing an unsigned index later.
+    if (!portInRange(red) || !portInRange(green) || !portInRange(blue)){
+        return;
+    }
     this->channelRed = red;
     this->channelGreen = green;
     this->channelBlue = blue;
@@ -172,6 +204,11 @@ void HwLedController::rgbConfig(unsigned int red, unsigned int green, unsigned i
 }
 
 void HwLedController::rgb(unsigned int red, unsigned int green, unsigned int blue){
+    // Refuse rather than underflow channelRed/Green/Blue-1 if rgbConfig()
+    // was never called (see issue #1) - all three default to 0.
+    if (this->channelRed == 0 || this->channelGreen == 0 || this->channelBlue == 0){
+        return;
+    }
 
     // tranistion delay blank-before-change if active
     if(this->_transitionDelay){
@@ -242,48 +279,6 @@ unsigned int c(int x, int maximum, int pc){
 }
 
 
-//
-// Should be moved out of hal.cpp
-//
-void cbControllerOutputsOff(String S){
-    controller->off();
-}
-
-void cbTestSlide(String S){
-
-    Serial.println("test_slide");
-    controller->transitionDelay(50);
-
-    controller->rgb(255,0,0);
-    delay(3000);
-    //controller->rgb(0,0,0);
-    //delay(50);
-    controller->rgb(0,255,0);
-    delay(3000);
-    //controller->rgb(0,0,0);
-    //delay(50);
-    controller->rgb(0,0,255);
-    delay(3000);
-    //controller->rgb(0,0,0);
-    //delay(50);
-    controller->rgb(153, 50, 204);
-    delay(3000);
-    //controller->rgb(0,0,0);
-    //delay(50);
-    controller->rgb(255,255,0);
-    delay(3000);
-    //controller->rgb(0,0,0);
-    //delay(50);
-    controller->rgb(0,255,0);
-    delay(3000);
-    controller->rgb(0,0,0);
-
-
-
-}
-
-
-
 void setup_hardware(){
     /* 
     // CB007 - 4 CH ON/OFF
@@ -305,66 +300,5 @@ void setup_hardware(){
     
     // Configure which output channels are red, blue & green
     controller->rgbConfig(1,2,3,true);
-}
-
-
-void test_deserialise(){
-    //StaticJsonDocument<512> payload;
-
-    DynamicJsonDocument doc(2048);
-
-    const char * json = "\
-    {\
-        \"hardware\": {\
-            \"name\": \"CB007-01\",\
-            \"outputs\":[\
-                {\"pin\": \"d7\", \"inverted\": true, \"name\":\"Channel 1\"},\
-                {\"pin\": \"d6\", \"inverted\": true, \"name\":\"Channel 2\"},\
-                {\"pin\": \"d5\", \"inverted\": true, \"name\":\"Channel 3\"},\
-                {\"pin\": \"d0\", \"inverted\": true, \"name\":\"Channel 4\"}\
-            ],\
-            \"inputs\":[\
-                {\"pin\": \"d3\", \"name\": \"DS18B20\"}\
-            ]\
-        }\
-    }\
-    ";
-
-    deserializeJson(doc, json);
-    JsonObject object = doc.as<JsonObject>();
-    //const char * stuff = object["hardware"]["name"];
-
-    if(object.containsKey("hardware")){
-        Serial.println("has hardware");
-
-        
-        JsonVariant j = object["hardware"]["outputs"];
-        if(!j.isNull()){
-            JsonArray a = j.as<JsonArray>();
-            Serial.println("Has hardware.outputs");
-            Serial.println(j.size());
-
-            for(unsigned int i=0;i<j.size();i++){
-
-                Serial.println(a["name"]);
-            }
-
-        }
-    }
-
-    //Serial.println(stuff);
-    //JsonObject row = object["hardware"]["outputs"][0];
-    //char * portStr = object["hardware"]["outputs"][0]["pin"];
-
-    //char * s = row["pin"];
-    //Serial.println(s);
-
-//    bool inverted = (stuff2["inverted"]=="false")?false:true;
-//    char * name = stuff2["name"];
-//    hwPorts[n(3)].begin(D5, inverted, name);
-
-
-    //Serial.println(stuff2);
-
 }
 

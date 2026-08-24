@@ -6,6 +6,8 @@
 #include "build_info.h"
 #include "esp_funcs.h"
 #include "hal.h"
+#include "examples.h"
+#include "switcher/onoff.h"
 //#include "pwm.h"
 #include "watchdog.h"
 //#include "profile.h"
@@ -91,6 +93,13 @@ void setup() {
   // kept fighting over the connection).
   core.setNodeName("EFXC");
   core.start();
+
+  // Registers "outoff"/"test_slide" demo commands (see src/examples.cpp).
+  // Safe to call even though setup_hardware() isn't wired up yet (#7,
+  // deferred) - HwLedController::rgb()'s own guards (#1) make them a
+  // no-op rather than a crash until the controller is actually configured.
+  setup_examples();
+  setup_switcher();
 
   Serial.println("main.spp: Setup finished");
 

@@ -5,7 +5,6 @@
 
 #include <arduino.h>
 
-void free_heap();
 void serialPrintInfo();
 
 #endif

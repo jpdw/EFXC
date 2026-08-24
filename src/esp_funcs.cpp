@@ -2,13 +2,6 @@
 
 #include "build_info.h" // required for serialPrintInfo()
 
-
-void free_heap(){
-    //long  fh = ESP.getFreeHeap();
-    Serial.print("FreeHeap = ");
-    Serial.print(ESP.getFreeHeap());
-}
-
 /* Output consistant version/ID info to Serial/debug */
 void serialPrintInfo() {
     Serial.println();
